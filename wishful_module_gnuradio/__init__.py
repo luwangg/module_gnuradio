@@ -1,1 +1,2 @@
-from .module_spectral_scan_ath9k import *
+from .module_gnuradio import *
+from .multi_gnuradio import *
