@@ -59,7 +59,8 @@ class GnuRadioModule(wishful_module.AgentModule):
         self.combiner = None
         self.log.debug('initialized ...')
 
-    def _exec_program(self, grc_radio_program_name):
+    def _exec_program(self, grc_radio_program_name, program_args):
+
         if self.gr_process_io is None:
                 self.gr_process_io = {'stdout': open('/tmp/gnuradio.log', 'w+'), 'stderr': open('/tmp/gnuradio-err.log', 'w+')}
 
@@ -70,10 +71,11 @@ class GnuRadioModule(wishful_module.AgentModule):
 
         try:
             # start GNURadio process
+            self.log.info("Starting GNURADIO program " + grc_radio_program_name)
             self.gr_radio_program_name = grc_radio_program_name
-            self.log.info(" ".join(["env","python2", self.gr_radio_programs[grc_radio_program_name]]))
+            self.log.info(" ".join(["env","python2", self.gr_radio_programs[grc_radio_program_name]] + program_args))
             self.gr_process = subprocess.Popen(["env","python2",
-                    self.gr_radio_programs[grc_radio_program_name]],
+                    self.gr_radio_programs[grc_radio_program_name]] + program_args, 
                     stdout=self.gr_process_io['stdout'], stderr=self.gr_process_io['stderr'])
             self.gr_state = RadioProgramState.RUNNING
             self.log.info("GNURadio process %s started succesfully" % (grc_radio_program_name))
@@ -139,8 +141,9 @@ class GnuRadioModule(wishful_module.AgentModule):
     @wishful_module.bind_function(upis.radio.activate_radio_program)
     def set_active(self, args):
 
-        program_code = args['program_code'] if 'program_code' in args else None
         program_name = args['program_name'] if 'program_name' in args else None
+        program_code = args['program_code'] if 'program_code' in args else None
+        program_args = args['program_args'] if 'program_args' in args else ['', ]
         program_type = args['program_type'] if 'program_type' in args else 'grc'
 
         if self.gr_state == RadioProgramState.INACTIVE:
@@ -159,7 +162,7 @@ class GnuRadioModule(wishful_module.AgentModule):
                # serialize radio program to local repository
                self._add_program(program_name, program_code)
 
-            return self._exec_program(program_name)
+            return self._exec_program(program_name, program_args)
 
         elif self.gr_state == RadioProgramState.PAUSED and self.gr_radio_program_name == program_name:
             # wakeup
