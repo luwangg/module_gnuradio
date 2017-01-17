@@ -106,6 +106,10 @@ class GnuRadioModule(wishful_module.AgentModule):
                     self.gr_process_io[k].close()
                     self.gr_process_io[k] = None
 
+        if self.ctrl_socket != None:
+            close(self.ctrol_socket)
+            self.ctrl_socket = None
+
     def _convert_grc_to_python(self, grc_radio_program_name, grc_radio_program_code):
         # change the id value, so when we convert we generate a specific .py filename
         grc_radio_program_code = bytes(bytearray(grc_radio_program_code, encoding='utf-8'))
@@ -177,7 +181,7 @@ class GnuRadioModule(wishful_module.AgentModule):
 
 
     @wishful_module.bind_function(upis.radio.deactivate_radio_program)
-    def set_inactive(self, grc_radio_program_name, pause = True):
+    def set_inactive(self, grc_radio_program_name, pause = False):
         if self.gr_state == RadioProgramState.RUNNING or self.gr_state == RadioProgramState.PAUSED:
             if pause:
                 self.log.info("Pausing radio program")
