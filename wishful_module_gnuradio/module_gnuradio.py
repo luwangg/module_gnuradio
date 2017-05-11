@@ -23,6 +23,25 @@ class RadioProgramState(Enum):
     PAUSED = 3
     STOPPED = 4
 
+class RadioProgramConf(object):
+    def __init__(self, name, args, port, code, path):
+        self.name = name
+        self.args = args
+        self.port = port
+        self.code = code
+        self.path = path
+
+    def __eq__(self, other):
+        if not isinstance(other, RadioProgramConf):
+            return False
+        if self.name == other.name:
+            return True
+        return False
+
+
+    def __hash__(self):
+        return self.name
+
 """
     Basic GNURadio connector module.
 
@@ -38,8 +57,12 @@ class GnuRadioModule(wishful_module.AgentModule):
 
         self.log = logging.getLogger('gnuradio_module.main')
 
+        # list of all radio programs path
         self.gr_radio_programs = {}
-        self.gr_radio_program_name = None
+        # dict from string to RadioProgramConf objs
+        self.gr_radio_programs_conf = {}
+        # name of program in execution/idle 
+        self.gr_exec_name = None
         self.gr_state = RadioProgramState.INACTIVE
 
         self.gr_process = None
@@ -53,7 +76,7 @@ class GnuRadioModule(wishful_module.AgentModule):
 
         # config values
         self.ctrl_socket_host = "localhost"
-        self.ctrl_socket_port = 12345
+        self.default_socket_port = 8080
         self.ctrl_socket = None
 
         self.combiner = None
@@ -70,12 +93,14 @@ class GnuRadioModule(wishful_module.AgentModule):
                 self.gr_process = None
 
         try:
+            the_program = self.gr_radio_programs_conf[grc_radio_program_name]
+
             # start GNURadio process
-            self.log.info("Starting GNURADIO program " + grc_radio_program_name)
-            self.gr_radio_program_name = grc_radio_program_name
-            self.log.info(" ".join(["env","python2", self.gr_radio_programs[grc_radio_program_name]] + program_args))
+            self.log.info("Starting GNURADIO program " + the_program.name)
+            self.gr_exec_name = grc_radio_program_name
+            self.log.info(" ".join(["env","python2", the_program.path] + program_args))
             self.gr_process = subprocess.Popen(["env","python2",
-                    self.gr_radio_programs[grc_radio_program_name]] + program_args, 
+                    the_program.path] + program_args, 
                     stdout=self.gr_process_io['stdout'], stderr=self.gr_process_io['stderr'])
             self.gr_state = RadioProgramState.RUNNING
             self.log.info("GNURadio process %s started succesfully" % (grc_radio_program_name))
@@ -83,16 +108,18 @@ class GnuRadioModule(wishful_module.AgentModule):
                 self.log.error("Failed to start GNURadio program %s" % (grc_radio_program_name))
                 self.gr_process_io = None
                 self.gr_process = None
-                self.gr_radio_program_name = None
+                self.gr_exec_name = None
                 return False
         return True
 
     def _remove_program(self, grc_radio_program_name):
         """ Remove radio program from local repository """
-        if grc_radio_program_name not in self.gr_radio_programs:
+        if grc_radio_program_name not in self.gr_radio_programs_conf:
             self.log.info("Could not remove program '%s': not registered" % (grc_radio_program_name, ) )
 
-        os.remove(self.gr_radio_programs[grc_radio_program_name])
+        the_program = self.gr_radio_programs_conf[grc_radio_program_name]
+
+        os.remove(the_program.path)
         os.rmdir(os.path.join(self.gr_radio_programs_path, grc_radio_program_name))
         os.remove(os.path.join(self.gr_radio_programs_path, grc_radio_program_name + '.py'))
 
@@ -138,9 +165,15 @@ class GnuRadioModule(wishful_module.AgentModule):
            grc_radio_program_code = py_fid.read();
         os.remove(py_filename)
 
-        self.log.info('gr_radio_programs:\n{}'.format(pprint.pformat(self.gr_radio_programs)))
-
         return grc_radio_program_code
+
+
+    @wishful_module.bind_function(upis.radio.get_running_radio_program)
+    def get_running_radio_program(self):
+        if self.gr_state == RadioProgramState.RUNNING:
+            return self.gr_exec_name
+        else:
+            return None
 
     @wishful_module.bind_function(upis.radio.activate_radio_program)
     def set_active(self, args):
@@ -149,10 +182,10 @@ class GnuRadioModule(wishful_module.AgentModule):
         program_code = args['program_code'] if 'program_code' in args else None
         program_args = args['program_args'] if 'program_args' in args else ['', ]
         program_type = args['program_type'] if 'program_type' in args else 'grc'
+        program_port = args['program_port'] if 'program_port' in args else self.default_socket_port
 
         if self.gr_state == RadioProgramState.INACTIVE:
             self.log.info("Start new radio program")
-            self.ctrl_socket = None
 
             # convert from xml (.grc file) to a python file
             if program_type == "grc":
@@ -161,17 +194,19 @@ class GnuRadioModule(wishful_module.AgentModule):
                 self.log.error("program_type must be either 'grc' or 'py' -> received %s" % (program_type, ))
                 return
 
-            """Launches Gnuradio in background"""
-            if program_name not in self.gr_radio_programs:
+            if program_name not in self.gr_radio_programs_conf:
                # serialize radio program to local repository
-               self._add_program(program_name, program_code)
+               path = self._add_program_to_repo(program_name, program_code)
+               # create a conf obj with everything
+               self.gr_radio_programs_conf[program_name] = RadioProgramConf(program_name, program_args, program_port, program_code, path)
 
+            """Launches Gnuradio in background"""
             return self._exec_program(program_name, program_args)
 
-        elif self.gr_state == RadioProgramState.PAUSED and self.gr_radio_program_name == program_name:
+        elif self.gr_state == RadioProgramState.PAUSED and self.gr_exec_name == program_name:
             # wakeup
             self.log.info('Wakeup radio program')
-            self._init_proxy()
+            self._init_proxy(self.gr_exec_name)
 
             # TODO: check if connection was succesfull
             self.gr_state = RadioProgramState.RUNNING
@@ -199,7 +234,7 @@ class GnuRadioModule(wishful_module.AgentModule):
     @wishful_module.bind_function(upis.radio.set_parameters)
     def gnuradio_set_vars(self, param_key_values_dict):
         if self.gr_state == RadioProgramState.RUNNING or self.gr_state == RadioProgramState.PAUSED:
-            self._init_proxy()
+            self._init_proxy(self.gr_exec_name)
             for k, v in param_key_values_dict.items():
                 try:
                     getattr(self.ctrl_socket, "set_%s" % k)(v)
@@ -212,7 +247,7 @@ class GnuRadioModule(wishful_module.AgentModule):
     def gnuradio_get_vars(self, param_key_list):
         if self.gr_state == RadioProgramState.RUNNING or self.gr_state == RadioProgramState.PAUSED:
             rv = {}
-            self._init_proxy()
+            self._init_proxy(self.gr_exec_name)
             for k in param_key_list:
                 try:
                     self.log.info("Probing for variable '%s'" % (k,))
@@ -227,26 +262,28 @@ class GnuRadioModule(wishful_module.AgentModule):
             self.log.warn("no running or paused radio program; ignore command")
             return None
 
-    def _add_program(self, grc_radio_program_name, grc_radio_program_code):
+    def _add_program_to_repo(self, grc_radio_program_name, grc_radio_program_code):
         """ Serialize radio program to local repository """
         self.log.info("Add radio program %s to local repository" % grc_radio_program_name)
 
+        path = os.path.join(self.gr_radio_programs_path, grc_radio_program_name + ".py")
+
         # serialize radio program XML flowgraph to file
-        fid = open(os.path.join(self.gr_radio_programs_path, grc_radio_program_name + '.py'), 'w')
+        fid = open(path, 'w')
+
         fid.write(grc_radio_program_code)
         fid.close()
 
-        self.gr_radio_programs[grc_radio_program_name] = os.path.join(self.gr_radio_programs_path, grc_radio_program_name + ".py")
-
         # rebuild radio program dictionary
         self._build_radio_program_dict()
+
+        return path
 
     def _build_radio_program_dict(self):
         """
             Converts the radio program XML flowgraphs into executable python scripts
         """
         return
-
         self.gr_radio_programs = {}
         grc_files = dict.fromkeys([x.rstrip(".grc") for x in os.listdir(self.gr_radio_programs_path) if x.endswith(".grc")], 0)
         topblocks = dict.fromkeys(
@@ -276,13 +313,15 @@ class GnuRadioModule(wishful_module.AgentModule):
         self.log.info('gr_radio_programs:\n{}'.format(pprint.pformat(self.gr_radio_programs)))
 
 
-    def _init_proxy(self):
+    def _init_proxy(self, program_name):
         if self.ctrl_socket != None:
             self.log.info("Already connected to a GNURadio process")
             return
 
         try:
-            self.ctrl_socket = xmlrpc.client.ServerProxy("http://%s:%d" % (self.ctrl_socket_host, self.ctrl_socket_port))
+            port = self.gr_radio_programs_conf[program_name].port
+
+            self.ctrl_socket = xmlrpc.client.ServerProxy("http://%s:%d" % (self.ctrl_socket_host, port))
             self.log.info("Connected to GNURadio process")
 
         except Exception as e:
