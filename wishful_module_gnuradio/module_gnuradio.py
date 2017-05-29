@@ -119,9 +119,17 @@ class GnuRadioModule(wishful_module.AgentModule):
 
         the_program = self.gr_radio_programs_conf[grc_radio_program_name]
 
-        os.remove(the_program.path)
-        os.rmdir(os.path.join(self.gr_radio_programs_path, grc_radio_program_name))
-        os.remove(os.path.join(self.gr_radio_programs_path, grc_radio_program_name + '.py'))
+        if os.path.isfile(the_program.path):
+            os.remove(the_program.path)
+
+        # if the program is GRC, we need to also remove the generated python file
+        if the_program.path.endswith('grc'):
+            pyfile = os.path.splitext(the_program.path)[0] + '.py'
+            if os.path.isfile(pyfile):
+                os.remove(pyfile)
+
+        # remove from our configuration dict
+        del self.gr_radio_programs_conf[grc_radio_program_name]
 
     def _close_gr_process(self):
         if self.gr_process is not None and hasattr(self.gr_process, "kill"):
@@ -133,9 +141,7 @@ class GnuRadioModule(wishful_module.AgentModule):
                     self.gr_process_io[k].close()
                     self.gr_process_io[k] = None
 
-        if self.ctrl_socket != None:
-            close(self.ctrol_socket)
-            self.ctrl_socket = None
+        self.ctrl_socket = None
 
     def _convert_grc_to_python(self, grc_radio_program_name, grc_radio_program_code):
         # change the id value, so when we convert we generate a specific .py filename
@@ -216,7 +222,12 @@ class GnuRadioModule(wishful_module.AgentModule):
 
 
     @wishful_module.bind_function(upis.radio.deactivate_radio_program)
-    def set_inactive(self, grc_radio_program_name, pause = False):
+    def set_inactive(self, radio_program_name, pause = False):
+
+        if radio_program_name != self.gr_exec_name:
+            self.log.info('Program {} is not running. Running program is {}'.format(radio_program_name, self.gr_exec_name))
+            return
+
         if self.gr_state == RadioProgramState.RUNNING or self.gr_state == RadioProgramState.PAUSED:
             if pause:
                 self.log.info("Pausing radio program")
@@ -227,7 +238,7 @@ class GnuRadioModule(wishful_module.AgentModule):
                 self.log.info("Stopping radio program")
                 self.gr_state = RadioProgramState.INACTIVE
                 self._close_gr_process()
-                self._remove_program(grc_radio_program_name)
+                self._remove_program(radio_program_name)
         else:
             self.log.warn("no running or paused radio program; ignore command")
 
