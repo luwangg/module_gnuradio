@@ -76,7 +76,7 @@ class GnuRadioModule(wishful_module.AgentModule):
 
         # config values
         self.ctrl_socket_host = "localhost"
-        self.default_socket_port = 8080
+        self.default_socket_port = 1235
         self.ctrl_socket = None
 
         self.combiner = None
