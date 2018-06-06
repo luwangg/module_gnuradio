@@ -97,14 +97,13 @@ class GnuRadioModule(wishful_module.AgentModule):
 
             # start GNURadio process
             self.log.info("Starting GNURADIO program " + the_program.name)
+
             self.gr_exec_name = grc_radio_program_name
-            self.log.info(" ".join(["env","python2", the_program.path] + program_args))
-            self.gr_process = subprocess.Popen(["env","python2",
-                    the_program.path] + program_args, 
-                    stdout=self.gr_process_io['stdout'], stderr=self.gr_process_io['stderr'])
+            self.log.info(" ".join(["env", "python2", the_program.path, program_args]))
+            self.gr_process = subprocess.Popen(["env","python2", the_program.path, program_args], stdout=self.gr_process_io['stdout'], stderr=self.gr_process_io['stderr'])
             self.gr_state = RadioProgramState.RUNNING
             self.log.info("GNURadio process %s started succesfully" % (grc_radio_program_name))
-        except:
+        except Exception as e:
                 self.log.error("Failed to start GNURadio program %s" % (grc_radio_program_name))
                 self.gr_process_io = None
                 self.gr_process = None
